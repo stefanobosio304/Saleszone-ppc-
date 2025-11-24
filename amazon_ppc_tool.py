@@ -20,6 +20,7 @@ st.set_page_config(
 MENU_VOCI = [
     "PPC Optimizer",
     "Brand Analytics Insights",
+    "SQP – Search Query Performance",
     "Generazione Corrispettivi",
     "Controllo Inventario FBA",
     "Funnel Audit",
@@ -437,7 +438,145 @@ if menu == "Brand Analytics Insights":
 
     else:
         st.info("Carica un file per procedere.")
-# PAGINA 3: GENERAZIONE CORRISPETTIVI
+
+# =========================================================
+# PAGINA: SQP – SEARCH QUERY PERFORMANCE
+# =========================================================
+if menu == "SQP – Search Query Performance":
+    st.title("🔎 SQP – Search Query Performance")
+
+    sqp_file = st.file_uploader(
+        "Carica il file Search Query Performance (.csv)",
+        type=["csv"]
+    )
+
+    if sqp_file is None:
+        st.info("Carica il CSV SQP esportato da Brand Analytics.")
+    else:
+        # Tentativo di lettura con separatore ; poi ,
+        try:
+            df_sqp = pd.read_csv(sqp_file, sep=";")
+            if df_sqp.shape[1] == 1:
+                sqp_file.seek(0)
+                df_sqp = pd.read_csv(sqp_file, sep=",")
+        except Exception:
+            sqp_file.seek(0)
+            df_sqp = pd.read_csv(sqp_file)
+
+        # Normalizza leggermente gli header (rimozione spazi)
+        df_sqp.columns = df_sqp.columns.str.strip()
+
+        required_cols = [
+            "Query di ricerca",
+            "Punteggio della query di ricerca",
+            "Volume query di ricerca",
+            "Impressioni: conteggio totale",
+            "Impressioni: conteggio marchio",
+            "Impressioni: % quota del marchio",
+            "Clic: conteggio totale",
+            "Clic: percentuale di clic",
+            "Clic: conteggio marchio",
+            "Clic: % quota del marchio",
+            "Clic: prezzo (valore medio)",
+            "Clic: prezzo del marchio (valore medio)",
+            "Clic: velocità di spedizione in giornata",
+            "Clic: velocità di spedizione 1G",
+            "Clic: velocità di spedizione 2G",
+            "Aggiunte al carrello: conteggio totale",
+            "Aggiunte al carrello: % aggiunte al carrello",
+            "Aggiunte al carrello: conteggio marchio",
+            "Aggiunte al carrello: % quota marchio",
+            "Aggiunte al carrello: prezzo (valore medio)",
+            "Aggiunte al carrello: prezzo marchio (valore medio)",
+            "Aggiunte al carrello: velocità di spedizione in giornata",
+            "Aggiunte al carrello: velocità di spedizione 1G",
+            "Aggiunte al carrello: velocità di spedizione 2D",
+            "Acquisti: conteggio totale",
+            "Acquisti: percentuale di acquisto",
+            "Acquisti: conteggio marchio",
+            "Acquisti: % quota del marchio",
+            "Acquisti: prezzo (valore medio)",
+            "Acquisti: prezzo marchio (valore medio)",
+            "Acquisti: velocità di spedizione in giornata",
+            "Acquisti: velocità di spedizione 1G",
+            "Acquisti: velocità di spedizione 2G",
+            "Data di segnalazione",
+        ]
+
+        missing_cols = [c for c in required_cols if c not in df_sqp.columns]
+        if missing_cols:
+            st.error(
+                "Nel file mancano le seguenti colonne obbligatorie:\n- "
+                + "\n- ".join(missing_cols)
+            )
+        else:
+            # Conversione numerica per le colonne coinvolte nei calcoli
+            num_cols = [
+                "Impressioni: conteggio totale",
+                "Impressioni: conteggio marchio",
+                "Clic: conteggio totale",
+                "Clic: conteggio marchio",
+                "Acquisti: conteggio totale",
+                "Acquisti: conteggio marchio",
+            ]
+            for col in num_cols:
+                df_sqp[col] = pd.to_numeric(df_sqp[col], errors="coerce")
+
+            # Evito divisioni per zero usando where
+            df_sqp["CTR MARKET"] = df_sqp["Clic: conteggio totale"] / df_sqp["Impressioni: conteggio totale"].where(
+                df_sqp["Impressioni: conteggio totale"] != 0
+            )
+
+            df_sqp["CTR MARCHIO"] = df_sqp["Clic: conteggio marchio"] / df_sqp["Impressioni: conteggio marchio"].where(
+                df_sqp["Impressioni: conteggio marchio"] != 0
+            )
+
+            df_sqp["CR MARKET"] = df_sqp["Acquisti: conteggio totale"] / df_sqp["Clic: conteggio totale"].where(
+                df_sqp["Clic: conteggio totale"] != 0
+            )
+
+            df_sqp["CR MARCHIO"] = df_sqp["Acquisti: conteggio marchio"] / df_sqp["Clic: conteggio marchio"].where(
+                df_sqp["Clic: conteggio marchio"] != 0
+            )
+
+            # Se li vuoi in percentuale, decommenta:
+            # for col in ["CTR MARKET", "CTR MARCHIO", "CR MARKET", "CR MARCHIO"]:
+            #     df_sqp[col] = df_sqp[col] * 100
+
+            # KPI veloci di sintesi
+            st.subheader("📌 KPI di sintesi (totale periodo)")
+            tot_imp = df_sqp["Impressioni: conteggio totale"].sum()
+            tot_clk = df_sqp["Clic: conteggio totale"].sum()
+            tot_buy = df_sqp["Acquisti: conteggio totale"].sum()
+
+            ctr_tot = (tot_clk / tot_imp * 100) if tot_imp > 0 else 0
+            cr_tot = (tot_buy / tot_clk * 100) if tot_clk > 0 else 0
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Impressioni totali", f"{int(tot_imp):,}".replace(",", "."))
+            c2.metric("CTR medio Market", f"{ctr_tot:.2f}%")
+            c3.metric("CR medio Market", f"{cr_tot:.2f}%")
+
+            st.subheader("🔍 Anteprima dati SQP (con CTR/CR calcolati)")
+            st.dataframe(
+                df_sqp.head(50),
+                use_container_width=True
+            )
+
+            # Esportazione in xlsx
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                df_sqp.to_excel(writer, index=False, sheet_name="SQP")
+            buffer.seek(0)
+
+            st.download_button(
+                "📥 Scarica file SQP elaborato (.xlsx)",
+                data=buffer.getvalue(),
+                file_name="sqp_analisi.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+# PAGINA 4: GENERAZIONE CORRISPETTIVI
 # =========================================================
 if menu == "Generazione Corrispettivi":
     st.title("📄 Generazione Corrispettivi Mensili")
@@ -496,7 +635,7 @@ if menu == "Generazione Corrispettivi":
         )
 
 # =========================================================
-# PAGINA 4: CONTROLLO INVENTARIO FBA
+# PAGINA 5: CONTROLLO INVENTARIO FBA
 # =========================================================
 
 if menu == "Controllo Inventario FBA":
